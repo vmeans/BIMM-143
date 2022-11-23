@@ -1,0 +1,326 @@
+---
+title: "Lab12"
+author: "Victoria Means"
+format: html
+editor: visual
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+##Section 2. Import countData and colData We will use good old 'read.csv' to read the two things we need for this analysis: - count data - col data(metadata)
+
+```{r}
+counts <- read.csv("airway_scaledcounts.csv", row.names=1)
+metadata <-  read.csv("airway_metadata.csv")
+
+```
+
+```{r}
+head(counts)
+head(metadata)
+```
+
+How many transcripts do I have? **Q1. There are 38694 genes in this dataset.** **Q2. There are 4 'control' cell lines.**
+
+```{r}
+nrow(counts)
+metadata$dex == "control"
+```
+
+##Section 3. Toy differential gene expression - Analysis: The "treated" have the dex drug and the "control" do not. First I need to be able to extract just the "control" columns in the 'counts' data set
+
+```{r}
+control.inds <- metadata$dex == "control"
+control <- metadata[control.inds,]
+control$id
+```
+
+Now I can use this access just the "control" columns of my 'counts' data...
+
+```{r}
+control.counts <-  counts[,control$id]
+head(control.counts)
+```
+
+Find the mean count value for each transcript/gene by binding the 'rowMeans()'
+
+```{r}
+control.mean <- rowMeans(control.counts)
+head(control.mean)
+```
+
+**Q3** To make the code appear more robust, you would use the code as seen above instead of below (the website's version.) You would calculate for the mean rather than calculating for the sum and dividing by the specificed cell lines. **Q4** Find the mean value for all the treated columns in the same way
+
+```{r}
+treated.inds <- metadata$dex == "treated"
+treated <- metadata[treated.inds,]
+treated$id
+treated.counts <-  counts[,treated$id]
+head(treated.counts)
+treated.mean <- rowMeans(treated.counts)
+head(treated.mean)
+```
+
+(Website code differ from class code on top but showcases the same result)
+
+```{r}
+control <- metadata[metadata[,"dex"]=="control",]
+control.counts <- counts[ ,control$id]
+control.mean <- rowSums( control.counts )/4 
+head(control.mean)
+```
+
+```{r}
+library(dplyr)
+control <- metadata %>% filter(dex=="control")
+control.counts <- counts %>% select(control$id) 
+control.mean <- rowSums(control.counts)/4
+head(control.mean)
+```
+
+Now I have 'control.mean' and 'treated.mean'. lets put them together for safe keeping and ease of use later
+
+```{r, message=FALSE}
+meancounts <- data.frame(control.mean, treated.mean)
+meancounts
+```
+
+```{r}
+colSums(meancounts)
+```
+
+**Q5(a).**
+
+```{r}
+plot(meancounts)
+```
+
+This is very heavily skewed and over a wide range - calling out for a log transform
+
+**Q6.**
+
+```{r}
+plot(meancounts, log="xy")
+```
+
+We like working with log transformed data as it can help make things more straightforward to interpret
+
+If we have no change: What if we had a doubling: What if we had half as much:
+
+```{r}
+log2(20/20)
+log2(40/20)
+log2(10/20)
+```
+
+**Q5(b).**
+
+```{r}
+library(ggplot2)
+ggplot(meancounts, aes(x=control.mean, y=treated.mean)) +
+  geom_point() +
+  scale_x_continuous(trans="log10") +
+  scale_y_continuous(trans="log10")
+
+```
+
+log2foldchange Let's calculate them for out data
+
+```{r, message=FALSE}
+meancounts$log2fc <- log2(meancounts[,"treated.mean"]/meancounts[,"control.mean"])
+meancounts$log2fc
+head(meancounts)
+
+```
+
+We want to filter out any genes(that is the rows) where we have ZERO count data.
+
+```{r, message=FALSE}
+meancounts[,1:2]==0
+to.keep.inds <- rowSums(meancounts[,1:2]==0) ==0
+head(to.keep.inds)
+```
+
+```{r}
+mycounts <- meancounts[to.keep.inds,]
+nrow(mycounts)
+```
+
+A common threshold for calling genes as differentialy expressed is a log2fold-change of +2 or -2
+
+```{r}
+sum(mycounts$log2fc >= +2)
+```
+
+What percent is this?
+
+```{r}
+round((sum(mycounts$log2fc >= +2)/ nrow(mycounts)) * 100,2)
+```
+
+down-regulated
+
+```{r}
+round((sum(mycounts$log2fc <= -2)/ nrow(mycounts)) * 100,2)
+```
+
+```{r}
+zero.vals <- which(meancounts[,1:2]==0, arr.ind=TRUE)
+
+to.rm <- unique(zero.vals[,1])
+mycounts <- meancounts[-to.rm,]
+head(mycounts)
+```
+
+**Q7 arr.ind argument within the which() function is used to ignore the TRUE values within the row and column and only focus on the row columns. The unique() is to make sure that there is not double counting the rows if they have TRUE in both of their samples.**
+
+**Q8. There are 250 up regulated genes that are greater than the 2fc level** **Q9. There are 367 down regulated genes that are greater than the 2fc level** **Q10. These results are not trustworthy because these values are not statistically significant**
+
+```{r}
+up.ind <- mycounts$log2fc > 2
+down.ind <- mycounts$log2fc < (-2)
+
+sum(up.ind)
+sum(down.ind)
+```
+
+##Section 4. DESeq2 Analysis We need some stats to check if the drug induced difference is significant
+
+```{r, message=FALSE}
+#It will load the code but won't print out when rendered 
+library(DESeq2)
+```
+
+The main function in the DESeq2 package is called 'deseq()'. it wants our count data and our colData(metadata) as input in a specific way.
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData=counts, 
+                              colData=metadata, 
+                              design=~dex)
+dds
+```
+
+```{r}
+#results(dds)
+```
+
+```{r}
+dds <- DESeq(dds)
+
+```
+
+```{r}
+res <- results(dds)
+res
+```
+
+```{r}
+summary(res)
+```
+
+```{r}
+res05 <- results(dds, alpha=0.05)
+summary(res05)
+```
+
+##Section 5. Adding Annotation Data
+
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+```
+
+```{r}
+columns(org.Hs.eg.db)
+```
+
+```{r}
+res$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res), # Our genenames
+                     keytype="ENSEMBL",        # The format of our genenames
+                     column="SYMBOL",          # The new format we want to add
+                     multiVals="first")
+```
+
+```{r}
+head(res)
+```
+
+**Q11.**
+
+```{r}
+res$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+res$uniprot <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="UNIPROT",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+res$genename <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res),
+                     column="GENENAME",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+head(res)
+```
+
+```{r}
+ord <- order( res$padj )
+#View(res[ord,])
+head(res[ord,])
+```
+
+Now what we have got so far is the log2 fold-change and the adjusted p-value for the significance
+
+##Section 6. Data Visualization
+
+```{r}
+
+plot( res$log2FoldChange,  -log(res$padj), 
+      xlab="Log2(FoldChange)",
+      ylab="-Log(P-value)")
+```
+
+```{r}
+plot( res$log2FoldChange,  -log(res$padj), 
+ ylab="-Log(P-value)", xlab="Log2(FoldChange)")
+
+# Add some cut-off lines
+abline(v=c(-2,2), col="darkgray", lty=2)
+abline(h=-log(0.05), col="darkgray", lty=2)
+```
+
+```{r}
+# Setup our custom point color vector 
+mycols <- rep("gray", nrow(res))
+mycols[ abs(res$log2FoldChange) > 2 ]  <- "red" 
+
+inds <- (res$padj < 0.01) & (abs(res$log2FoldChange) > 2 )
+mycols[ inds ] <- "blue"
+
+# Volcano plot with custom colors 
+plot( res$log2FoldChange,  -log(res$padj), 
+ col=mycols, ylab="-Log(P-value)", xlab="Log2(FoldChange)" )
+
+# Cut-off lines
+abline(v=c(-2,2), col="gray", lty=2)
+abline(h=-log(0.1), col="gray", lty=2)
+```
+
+```{r}
+library(EnhancedVolcano)
+x <- as.data.frame(res)
+
+EnhancedVolcano(x,
+    lab = x$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue')
+```
